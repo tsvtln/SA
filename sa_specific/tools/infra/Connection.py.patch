@@ -1,0 +1,64 @@
+--- Connection.py.orig	2009-03-18 18:59:55.000000000 +0000
++++ Connection.py	2009-03-18 19:41:16.000000000 +0000
+@@ -13,10 +13,18 @@
+ 
+ WantReadError = "operation wants to read data"
+ WantWriteError = "operation wants to write data"
+ UnExpectedEOFError = "unexpected eof"
+ 
++
++def log_data(msg):
++    try:
++        f = open("/var/log/opsware/agent/coglib_ssl_data.log", "a")
++        f.write(msg)
++    finally:
++        f.close()
++
+ class Connection:
+     def __init__(self, ctx, sock=None):
+         self.ssl = None
+         self.ctx=ctx
+         self.ssl=m2.ssl_new(self.ctx.ctx)
+@@ -87,25 +95,40 @@
+         return self._check_ssl_return(m2.ssl_connect(self.ssl))
+ 
+     def shutdown(self, how):
+         m2.ssl_set_shutdown(self.ssl, how)
+ 
++    def log_data(self, op, data):
++        data_len = -1
++        try:
++            data_len = len(data)
++        except:
++            pass
++        log_label = "%s-%s" % (('%s:%s' % self.socket.getsockname()), ('%s:%s' % self.socket.getpeername()))
++        log_data("%s: %s(%d): %s\n" % (log_label, op, data_len, repr(data)))
++
+     def send(self, data):
++        self.log_data("send", data)
+         return m2.ssl_write_nbio(self.ssl, data)
+ 
+     def write(self, data):
++        self.log_data("write", data)
+         return m2.ssl_write_nbio(self.ssl, data)
+ 
+     def read(self, size=4096):
+         if size <= 0:
+             raise ValueError, 'size <= 0'
+-        return m2.ssl_read_nbio(self.ssl, size)
++        data = m2.ssl_read_nbio(self.ssl, size)
++        self.log_data("read", data)
++        return data
+ 
+     def recv(self, size=4096):
+         if size <= 0:
+             raise ValueError, 'size <= 0'
+-        return m2.ssl_read_nbio(self.ssl, size)
++        data = m2.ssl_read_nbio(self.ssl, size)
++        self.log_data("recv", data)
++        return data
+ 
+     def setblocking(self, mode):
+         self.socket.setblocking(mode)
+ 
+     def fileno(self):

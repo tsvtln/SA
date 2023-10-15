@@ -1,0 +1,16 @@
+Bootstrap code:
+
+python -c 'import base64; import gzip; eval(compile(gzip.zlib.decompress(base64.decodestring("eNptj88KwjAMh+99irFTC7MgiAdhJ/XkYQ+gUtwaJNCmo6n45+ltHQoDb798TfKl6McQU4V+FDhFfvI3hl/qLwzr1be6vnAUgfU9YgK5bOptt9ufqFaC2jyuOVkkHeFiHRLIgum4cUCS1GJ5FvC/y7VISf57UoLb7Csg65yaybvDR+3bfJ0muBsf7M1Bdgl4wFANwY+Y63K1fjnstYXCIjDL6WMfYoFTRLpKVqqhpi7DtaqQKq+NsTgkY6aNMIdvuDNuqQ==")),"foobar","exec"));'
+
+python -c 'import sys;import base64;import gzip;sys.stdout.write("CODE\n");n=sys.stdin.readline();n=n[:len(n)];l=int(sys.stdin.readline());s=sys.stdin.read(l);sys.stdout.write("OK\n");eval(compile(gzip.zlib.decompress(base64.decodestring(s)),n,"exec"))'
+
+Sample dialog:
+
+CODE
+file_name
+57
+eNorKMrMK9GIj89LzE2Nj9fkKgDzlTxSc3LyFcLzi3JSFJU0uQALKwyv
+OK
+__main__
+Hello World!
+

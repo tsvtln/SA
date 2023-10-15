@@ -1,0 +1,17 @@
+aaa.ldap.search.binddn=cn=sas aaa,ou=IT,dc=opsware,dc=com
+aaa.ldap.search.pw=opsware_ADMIN
+#aaa.ldap.hostname=snv-dc1.corp.opsware.com
+aaa.ldap.hostname=nc-dc1.opsware.com
+aaa.ldap.secureport=389
+#aaa.ldap.ssl=true
+#aaa.ldap.servercert.ca.fname=/var/opt/opsware/crypto/twist/ad.pem
+aaa.ldap.usestarttls=true
+aaa.ldap.search.filter.template=(cn=$)
+#aaa.ldap.search.filter.template=(&(objectclass=user)(|(department=Customer Support)(department=Engineering)(department=Global Services))(cn=$))
+#aaa.ldap.search.filter.template=(&(objectclass=user)(|(cn=Jeremy Gaudet)(cn=David Fidler)))
+aaa.ldap.search.base.template=dc=opsware,dc=com
+aaa.ldap.search.naming.attribute=samaccountname
+aaa.ldap.search.naming.display.name=cn
+com.opsware.acm.state.Sequencer.level=FINE
+#aaa.ldap.search.pagesize=1000001
+

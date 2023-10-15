@@ -1,0 +1,17 @@
+Usage: ldap_auth <sas_username> | -b <binddn> [-toc <twist_overrides_conf>]
+
+-------------------------------------------------------------------------------
+
+Usage: ExternalUsers.java [-u <sas_username>] -b <binddn> [-toc <twist_overrides_conf>]
+
+Password accepted via stdin as a property string of form:
+
+  password=<password>
+
+-------------------------------------------------------------------------------
+
+ex:
+
+echo 'password=opsware_ADMIN' | /opt/opsware/j2sdk1.4/bin/java ExternalUserUtil -d -b 'cn=sas aaa,ou=IT,dc=opsware,dc=com' -toc to2
+
+-------------------------------------------------------------------------------

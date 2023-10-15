@@ -1,0 +1,1 @@
+/opt/opsware/jdk1.6/bin/java -cp  /opt/opsware/twist/extlib/client/twistclient.jar:/opt/opsware/twist/lib/opsware_common-latest.jar:/opt/opsware/twist/extlib/client/opswclient.jar:/opt/opsware/twist/lib/spinclient-latest.jar:. DeleteFolder $@

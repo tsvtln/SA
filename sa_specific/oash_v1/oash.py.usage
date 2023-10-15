@@ -1,0 +1,35 @@
+Direct shell login to opsware agents via "ogsh.jump" xmlrpc.
+
+Usage: ./oash [-p <password>] [-c <client_cert_path] [-e <command>] 
+       [-g [realm@]gwhost[:gwport]] [-h] [-L [lhost:]lport:[rhost]:rport] [-T] 
+       [-y <python_expression>] [-R [rhost:]rport:[lhost]:lport]
+       user@agent_host[:agent_port]
+
+Options:
+ -c  Supply an optional client certificate.  (Expected to be in PEM format and
+     contain both certificate and private key.)
+ -d  Enable debug printouts.
+ -e  Execute given command remotely.
+ -g  Connect through an opswgw proxy port.  Realm is optional.  If no port is
+     specified, then defaults to 3001.
+ -h  Prints this help text.
+ -L  Specifies a local listener on host <lhost> port <lport> to be forwarded 
+     through the tunnel connection to remote host <rhost> on port <rport>.  If
+     either of <lhost> or <rhost> are not specified, then "localhost" is
+     assumed.
+ -p  Supply an optional password.  (In the future this will be neccessary when
+     authing as a win32 AD account.)
+ -R  Specifies a remote listener on host <rhost> port <rport> to be forwarded 
+     through the tunnel connection to local host <lhost> on port <lport>.  If
+     either of <lhost> or <rhost> are not specified, then "localhost" is
+     assumed.
+ -T  Suppress pty allocation request.
+ -y  Execute given python expression remotely.
+
+Notes:
+    o If [:agent_port] is not specified, '1002' is assumed.
+    o If [:gwport] port is not specified, then '3002' is assumed.
+
+Discussion:
+    This utility is still in heavy development.
+

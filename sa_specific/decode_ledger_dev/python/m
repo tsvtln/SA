@@ -1,0 +1,56 @@
+#!/bin/sh
+
+FINAL_EXEC="dump_ledger"
+
+# Attempt to locate a SA javac:
+JAVAC="`ls /opt/opsware/j2sdk*/bin/javac 2>/dev/null | tail -1`"
+
+# Figure out the platform we are running on.
+PLATFORM="`uname | perl -pe 's/SunOS/solaris/;s/Linux/linux/'`"
+
+# If we where unable to find a stock SA javac.
+if { [ \! "$JAVAC" ]; } then {
+  # Try to find a NIS installed javac.
+  JAVAC="`ls /shared/$PLATFORM/java/j2sdk1.4.*/bin/javac 2>/dev/null | tail -1`"
+} fi
+
+# If we where unable to find any JAVAC.
+if { [ \! "$JAVAC" ]; } then {
+  # Pull javac out of the user's path.
+  JAVAC="javac"
+} fi
+
+echo Using JAVAC='"'$JAVAC'"'
+
+# Truncate the final executable file.
+>"$FINAL_EXEC"
+
+# Emit some bootstrap to start the python blob.
+cat <<EOF >> "$FINAL_EXEC"
+#!/bin/sh
+PYTHON="\`ls /opt/opsware/bin/python2 /opt/opsware/bin/python24 /usr/bin/python 2>/dev/null | head -1\`"
+JAVA_BIN="\`ls /opt/opsware/j2sd*/bin/java 2>/dev/null | head -1\`"
+export JAVA_BIN
+CLASSPATH="\$CLASSPATH:\$0"
+export CLASSPATH
+exec \$PYTHON -u -c 'import string,base64,gzip,os;exec(gzip.zlib.decompress(base64.decodestring(string.join(os.fdopen(0).readlines(),""))))' "\$@" <<EOF
+EOF
+
+# Package up the core python code into a blob and emit it.
+python -c 'import sys,string,base64,gzip;sys.stdout.write(base64.encodestring(gzip.zlib.compress(string.join(open("dump_ledger.py").readlines(),""))));' >> "$FINAL_EXEC"
+
+# Emit the closing hear doc terminator for the bootstrap code.
+echo EOF >> "$FINAL_EXEC"
+echo exit >> "$FINAL_EXEC"
+
+# Build dec_jo.java
+"$JAVAC" dec_jo.java || exit 1
+
+# Build dec_jo.jar
+zip -9 dec_jo.jar dec_jo.class >/dev/null || exit 1
+
+# Concatinate the jar file to the end of the executable.
+cat dec_jo.jar >> "$FINAL_EXEC"
+
+# Make the final executable a+rx
+chmod a+rx "$FINAL_EXEC"

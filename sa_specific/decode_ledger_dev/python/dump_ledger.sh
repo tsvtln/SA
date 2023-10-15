@@ -1,0 +1,5 @@
+#!/bin/sh
+
+exit(0)
+DUMP_LEDGER_PY_GZ_B64_BEGIN
+DUMP_LEDGER_PY_GZ_B64_END

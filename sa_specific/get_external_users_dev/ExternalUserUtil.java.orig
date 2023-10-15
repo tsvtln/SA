@@ -1,0 +1,512 @@
+//package com.opsware.fido.impl.externaluser;
+
+// CLASSPATH=/opt/opsware/twist/lib/ldapbp.jar:/opt/opsware/twist/lib/ldapssl.jar:/opt/opsware/bea/weblogic81/server/lib/weblogic.jar:/var/opt/opsware/twist/twist/stage/_appsdir_main_ear/libref/TwistCommon.jar:/var/opt/opsware/twist/twist/stage/_appsdir_fido_ear/entity/fido-entity.jar:/var/opt/opsware/twist/twist/stage/_appsdir_fido_ear/session/fido-session.jar:/opt/opsware/twist/lib/commons-logging.jar:/opt/opsware/twist/lib/opsware_common-latest.jar:/opt/opsware/twist/lib/spinclient-latest.jar:/opt/opsware/twist/lib/common-latest.jar:.
+
+// eval /opt/opsware/j2sdk1.4/bin/java `cat /etc/opt/opsware/twist/twistOverrides.conf  | grep -v '^#' | perl -pe 'chomp();$_="'"'"'-D$_'"'"' "'` ExternalUserUtil
+
+//import java.util.regex.*;
+import java.sql.Timestamp;
+import javax.ejb.*;
+import java.util.*;
+import java.math.*;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.io.FileReader;
+    
+import javax.naming.Context;
+import javax.naming.NamingEnumeration;
+import javax.naming.NamingException;
+import javax.naming.directory.DirContext;
+import javax.naming.directory.InitialDirContext;
+import javax.naming.directory.SearchControls;
+import javax.naming.directory.SearchResult;
+import javax.naming.directory.Attributes;
+import javax.naming.directory.Attribute;
+import javax.naming.ldap.Control;
+import javax.naming.ldap.LdapContext;
+import javax.naming.ldap.InitialLdapContext;
+import com.sun.jndi.ldap.ctl.PagedResultsControl;
+import com.sun.jndi.ldap.ctl.PagedResultsResponseControl;
+
+import com.opsware.twist.event.*;
+import com.opsware.twist.utils.Configurator;
+import com.opsware.ldap.LdapSslClientConfig;
+import com.opsware.fido.ejb.entity.*;
+import com.opsware.fido.util.*;
+import com.opsware.fido.vo.*;
+import com.opsware.fido.list.filter.impl.*;
+import com.opsware.exception.*;
+import com.opsware.fido.exception.*;
+import com.opsware.fido.event.audit.*;
+import com.opsware.fido.ejb.session.*;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import com.opsware.security.Obfuscator;
+
+/**
+ *
+ * @author dboreham
+ **/
+public class ExternalUserUtil
+{
+    final Log log = LogFactory.getLog(this.getClass());
+    protected static ExternalUserUtil INSTANCE=null;
+
+    private String ldapUrl;
+    private String ldapFilterTemplate;
+    private String ldapSearchBase;
+    private String ldapBindDn;
+    private String ldapBindPw;
+    private String namingAttribute;
+    private String displayNameAttribute;
+    private LdapSslClientConfig sslConf;
+    private boolean useSsl = false;
+    private boolean useStartTls = false;
+    private String clientCertFilename;
+    private String clientCertCaFilename;
+    private String serverCertCaFilename;
+    private boolean useClientCert;
+    private boolean configured = false;
+    private int pageSize = 0;
+    private String[] returningAttributes;
+    
+    private Hashtable env;
+
+    public static synchronized ExternalUserUtil getInstance() {
+	if (INSTANCE == null)
+	    INSTANCE = new ExternalUserUtil(); 
+	return INSTANCE;
+    }
+
+    protected ExternalUserUtil() {
+    
+    	env = new Hashtable();
+	
+    	String serverHostname = System.getProperty("aaa.ldap.hostname");
+        if (serverHostname != null) {
+	    String serverPort = System.getProperty("aaa.ldap.port","389");
+	    useSsl = System.getProperty("aaa.ldap.ssl","false").equals("true");
+	    String serverSecureport = System.getProperty("aaa.ldap.secureport","636");
+	    useStartTls = System.getProperty("aaa.ldap.usestarttls","false").equals("true");
+	    useClientCert = System.getProperty("aaa.ldap.clientcert","false").equals("true");
+	    clientCertFilename = System.getProperty("aaa.ldap.clientcert.fname","");
+	    clientCertCaFilename = System.getProperty("aaa.ldap.clientcert.ca.fname","");
+	    serverCertCaFilename = System.getProperty("aaa.ldap.servercert.ca.fname","");
+	    String searchFilter_Template = System.getProperty("aaa.ldap.search.filter.template","uid=$");
+	    String searchBaseTemplate = System.getProperty("aaa.ldap.search.base.template","");
+	    namingAttribute = System.getProperty("aaa.ldap.search.naming.attribute","uid"); // samAccountName for AD
+	    displayNameAttribute = System.getProperty("aaa.ldap.search.display.name.attribute","cn"); // also cn on AD
+	    String searchBindDn = System.getProperty("aaa.ldap.search.binddn","");
+	    String searchBindPw = System.getProperty("aaa.ldap.search.pw","");
+	    pageSize = Integer.parseInt(System.getProperty("aaa.ldap.search.pagesize", "0"));
+	    returningAttributes = new String[]{namingAttribute, displayNameAttribute, "c", "givenName", "l", "mail", "postalAddress", "postalCode", "sn", "st", "streetAddress", "telephoneNumber"};
+	    
+	    ldapSearchBase = searchBaseTemplate;
+	    ldapFilterTemplate =searchFilter_Template;
+	    if (useSsl) {
+		String[] certPaths;
+                sslConf = new LdapSslClientConfig();
+                if (useClientCert) {
+                    certPaths = new String[] {clientCertFilename, clientCertCaFilename, serverCertCaFilename};
+                } else {
+                    certPaths = new String[] {serverCertCaFilename};
+                }
+                // Add the cert paths to the ssl config object
+                try {
+                    sslConf.init(certPaths);
+                } catch (Exception e) {
+                    // Need to log errors here
+                }
+                ldapUrl = "ldaps://" + serverHostname + ":" + serverSecureport;
+            } else {
+                ldapUrl = "ldap://" + serverHostname + ":" + serverPort;
+            }
+
+            // Run the password through the obsfucator in case it is encrypted.
+            try {
+                FileReader reader = null;
+                reader = new FileReader("/var/opt/opsware/crypto/twist/.rand");
+                char [] keyChars = new char[5000];
+                int numChars = reader.read(keyChars, 0, 5000);
+                String keyMaterial = new String(keyChars, 0, numChars);
+                searchBindPw = Obfuscator.decrypt(searchBindPw, keyMaterial);
+            } catch ( Exception e ) {
+                System.out.println( "Error occured while attempting to decrypt password: " + e );
+                System.out.println( "(Continuing anyway)" );
+                e.printStackTrace();
+            }
+
+            ldapBindDn = searchBindDn;
+            ldapBindPw = searchBindPw;
+	    
+            setupLdapConnection();
+            configured = true;
+        }
+    }
+    
+    public boolean isEnabled() {
+        return configured;
+    }
+    
+    
+    private ExternalUserVO ldapEntrytoEVO(Attributes thisResultAttrs, String authId)
+    {
+    	ExternalUserVO newUser = new ExternalUserVO();
+	try {
+	    Attribute thisAttr;
+	    String userName = "not found";
+	    String fullName = "not found";
+	    
+	    // Try to extract the username
+	    thisAttr = thisResultAttrs.get(namingAttribute);
+	    if (null != thisAttr) {
+		userName = (String)(thisAttr.get());
+	    }
+	    // Get the full name
+	    thisAttr = thisResultAttrs.get(displayNameAttribute);
+	    if (null != thisAttr) {
+		fullName = (String)(thisAttr.get());
+	    }
+	    newUser.setUserName(userName);
+	    newUser.setFullName(fullName);
+	    newUser.setAuthId(authId);
+	    
+	    thisAttr = thisResultAttrs.get("telephoneNumber");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setPhoneNumber(value);
+	    }
+	    
+	    thisAttr = thisResultAttrs.get("mail");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setEmailAddress(value);
+	    }
+	    
+	    thisAttr = thisResultAttrs.get("givenName");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setFirstName(value);
+	    }
+	    
+	    thisAttr = thisResultAttrs.get("l");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setCity(value);
+	    }
+	    
+	    thisAttr = thisResultAttrs.get("st");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setState(value);
+	    }
+	    
+	    // street address can be stored in postalAddress
+	    // or in streetAddress
+	    thisAttr = thisResultAttrs.get("postalAddress");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setStreet(value);
+	    }
+	    
+	    thisAttr = thisResultAttrs.get("streetAddress");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		if (thisAttr.equals("")) {
+		    // ignore
+		} else {
+		    newUser.setStreet(value);
+		}
+	    }
+	    
+	    
+	    thisAttr = thisResultAttrs.get("postalCode");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setPostalCode(value);
+	    }
+	    
+	    thisAttr = thisResultAttrs.get("sn");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setLastName(value);
+	    }
+	    thisAttr = thisResultAttrs.get("c");
+	    if (null != thisAttr) {
+		String value = (String)(thisAttr.get());
+		newUser.setCountry(value);
+	    }
+	    
+	} catch (NamingException e) {
+	    // If anything went wrong, we skip that entry
+	    newUser = null;
+	    if (log.isWarnEnabled())
+                log.warn("LDAP Exception while reading ldap entry", e);
+	}   
+	return newUser;
+    }
+    
+    public ExternalUserVO getUserVO(String authId) throws TwistException {
+    	Attributes thisResultAttrs;
+	try {
+	    thisResultAttrs = getLdapEntry(authId);
+	    return 	ldapEntrytoEVO(thisResultAttrs,authId);
+	} catch (Exception e) {
+	    throw new TwistException("Failed to read entry from LDAP",e.toString(),"");
+	}
+    }
+    
+    public List getUserVOs(String f) throws TwistException {
+        List users = new LinkedList();
+	HashSet authIdSet = new HashSet();
+	try {
+	    String filterString = f;
+	    String ldapFilter = applyFilterTemplate(filterString,ldapFilterTemplate);
+	    List searchResult = doLdapSearch(ldapSearchBase,ldapFilter);
+	    for (Iterator iter=searchResult.iterator(); iter.hasNext(); ) {
+		try {
+		    SearchResult thisResult = (SearchResult)iter.next();
+		    Attributes thisResultAttrs = thisResult.getAttributes();
+		    String authId = getExternalAuthId(thisResult);
+
+		    if (authIdSet.contains(authId)) {
+			// we've already processed an entry with same
+			// auth id, i.e., dn, so we'll ignore duplicates
+			if (log.isWarnEnabled())
+			    log.warn("LDAP search result contains duplicate entry for auth id: " + authId);
+			continue;
+		    } else {
+			authIdSet.add(authId);
+		    }
+		    
+		    ExternalUserVO newUser = ldapEntrytoEVO(thisResultAttrs,authId);
+		    if (newUser != null) {
+			users.add(newUser);
+		    }
+		} catch (Exception e) {
+		    // If anything went wrong, we skip that entry
+		}
+	    }
+	} catch (NamingException e) {
+	    if (log.isWarnEnabled())
+		log.warn("LDAP Exception", e);
+	    throw new TwistException(e);
+	} catch (IOException e) {
+            if (log.isWarnEnabled())
+                log.warn("LDAP Exception", e);
+            throw new TwistException(e);
+        }
+        return users;
+    }
+    
+    private String applyFilterTemplate(String insertString, String templateString) {
+        // Look for a '$' in the template
+        // If we find one, insert the insertion string there
+        int offset = templateString.indexOf('$');
+        if (-1 != offset) {
+            String retString = templateString.substring(0,offset) + insertString + templateString.substring(offset+1);
+            return retString;
+        } else {
+            // Otherwise, return the template itself
+            return templateString;
+        }
+    }
+    
+    protected Attributes getLdapEntry(String authId) 
+	throws NamingException {
+	
+	Attributes answer = null;
+	DirContext ctx = new InitialDirContext(env);  // BIND
+	
+	answer = ctx.getAttributes(authId);
+	ctx.close();  // UNBIND
+	
+	return answer;
+    }
+    
+    protected List doLdapSearch(String searchbase, String searchfilter) 
+	throws NamingException, IOException {
+
+	return doLdapSearch(searchbase, searchfilter, returningAttributes);
+    }
+    
+    protected List doLdapSearch(String searchbase, String searchfilter, String[] attrIDs) 
+	throws NamingException, IOException {
+	
+	NamingEnumeration answer = null;
+	//if (log.isInfoEnabled())
+	//    log.info("Env for doLdapSearch : " + env); 
+        System.out.println("LDAP Context Env: " + env);
+
+	LdapContext ctx = new InitialLdapContext(env, null);  // BIND
+	SearchControls ctls = new SearchControls();
+	
+	if (attrIDs != null && attrIDs.length > 0) {
+	    ctls.setReturningAttributes(attrIDs);
+        }
+	// configure for sub-tree search
+	ctls.setSearchScope(SearchControls.SUBTREE_SCOPE);
+
+	//initialize the cookie that we pass back in subsequent pages
+        byte[] cookie = null;
+	if (pageSize > 0) {
+            // set the page size
+	    if (log.isInfoEnabled()) {
+	    	log.info("paged search with size: " + pageSize);
+	    }
+            ctx.setRequestControls(new Control[]{new PagedResultsControl(pageSize)});
+        }
+
+	ArrayList results = new ArrayList();
+        do {
+            answer = ctx.search(searchbase, searchfilter, ctls);
+
+            // loop through this page
+            while (answer != null && answer.hasMore()) {
+                results.add(answer.next());
+            }
+
+            if (pageSize == 0) {
+                break; // not paging so no need to query server again
+            }
+
+            // examine the response controls
+            cookie = parseControls(ctx.getResponseControls());
+
+            // pass the cookie back to the server for the next page
+            ctx.setRequestControls(new Control[]{new PagedResultsControl(pageSize, cookie, Control.CRITICAL) });
+
+        } while ((cookie != null) && (cookie.length != 0));
+        
+	ctx.close();  // UNBIND	
+	return results;
+    }
+
+    protected byte[] parseControls(Control[] controls) throws NamingException {
+	byte[] cookie = null;
+ 
+	if (controls != null) {
+	    for (int i = 0; i < controls.length; i++) {
+		if (controls[i] instanceof PagedResultsResponseControl) {
+		   PagedResultsResponseControl prrc = (PagedResultsResponseControl)controls[i];
+		   cookie = prrc.getCookie();
+		}
+	    }
+	}
+ 
+	return (cookie == null) ? new byte[0] : cookie;
+    }
+
+    private String getExternalAuthId(SearchResult result) throws TwistException {
+	String authId = "";
+	try {
+            if ( result.isRelative() ) {
+		authId = result.getName() + "," + ldapSearchBase;
+	    } else {
+		// name is absolute, most likely a referral entry,
+		// so extract authId from entire url name
+		URI uri = new URI(result.getName());
+		authId = uri.getPath().trim();
+		if (authId.startsWith("/")) {
+		    authId = authId.substring(1, authId.length());
+		}
+	    }
+	} catch (URISyntaxException e) {
+	    if (log.isWarnEnabled())
+                log.warn("LDAP Exception", e);
+            throw new TwistException(e);
+        }
+        return authId;
+    }
+
+
+    /*
+     * Enables and configures connection pooling for the context.
+     */
+    private void configurePooling() {
+	
+	// Use connection pooling.
+	env.put("com.sun.jndi.ldap.connect.pool", "true");
+	
+	/**
+	 * TODO: Set the following connection properties only if they are not already set.
+	 * It should not override a manual setting. 
+	 */
+	
+	/* 
+	 * Allow pooling over plain and SSL connections.  
+	 * By default only plain is allowed. 
+	 */
+	System.setProperty("com.sun.jndi.ldap.connect.pool.protocol", "ssl plain");
+	
+	/* 
+	 * Allow pooling with all types of authentication.
+	 * By default only "none" and "simple" are pooled. 
+	 */
+	System.setProperty("com.sun.jndi.ldap.connect.pool.authentication", 
+			   "none simple DIGEST-MD5");
+	
+	// Configure a maxiumum and a preferred pool size.
+	System.setProperty("com.sun.jndi.ldap.connect.pool.maxsize", "40");
+	System.setProperty("com.sun.jndi.ldap.connect.pool.prefsize", "20");
+	
+	// Configure a timeout of five minutes (in milliseconds) 
+	System.setProperty("com.sun.jndi.ldap.connect.pool.timeout", "30000");
+	
+	// Trace output
+	System.setProperty("com.sun.jndi.ldap.connect.pool.debug", "fine");
+    }
+    
+    /*
+     * Configure the basics for the LDAP connection.
+     */
+    protected void setupLdapConnection() {
+	// Use the LDAP Service Provider.  Only change it if it is not already set.
+	final String ldapprovider="com.sun.jndi.ldap.LdapCtxFactory";
+        
+        // Setup SSL if required
+        if (useSsl) {
+            sslConf.configureJndiContext(env);
+        }
+	
+	if (env.get(Context.INITIAL_CONTEXT_FACTORY) != ldapprovider) {
+	    env.put(Context.INITIAL_CONTEXT_FACTORY, ldapprovider);
+	}
+	
+	// Set the LDAP URL for the connection.
+	env.put(Context.PROVIDER_URL, ldapUrl);
+	
+	// Provide the bind credentials.
+	env.put(Context.SECURITY_PRINCIPAL, ldapBindDn);
+	env.put(Context.SECURITY_CREDENTIALS, ldapBindPw);
+
+	// Set referral property to "follow" referrals automatically
+	env.put(Context.REFERRAL, "follow");
+    }
+
+    public static void main( String[] asArgs ) {
+        ExternalUserUtil util = ExternalUserUtil.getInstance();
+
+        String format = "*";
+        if ( asArgs.length > 0 ) {
+            format = asArgs[0];
+        }
+
+        try {
+            List userList = util.getUserVOs(format);
+            Iterator it = userList.iterator();
+            System.out.println("External Users:");
+            int n = 1;
+            while(it.hasNext()) {
+                ExternalUserVO evo = (ExternalUserVO) it.next();
+                System.out.println( n + ". " + evo.getFullName() + "(" + evo.getUserName() + ")" );
+                n++;
+            }
+        } catch ( Exception e ) {
+            System.out.println( "Caught Exception: " + e );
+            e.printStackTrace();
+        }
+    }
+}

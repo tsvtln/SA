@@ -1,0 +1,1 @@
+/opt/opsware/j2sdk1.4/bin/javac sas_passwd_rmi.java && zip -9 sas_passwd_rmi.jar sas_passwd_rmi.class && cat sas_passwd_rmi.sh sas_passwd_rmi.jar > sas_passwd_rmi && chmod a+rx sas_passwd_rmi

@@ -1,0 +1,109 @@
+#!/lc/bin/python
+
+import sys, pickle, os, types
+if "/lc/blackshadow" not in sys.path: sys.path.append("/lc/blackshadow")
+
+from coglib import spinwrapper
+from coglib import certmaster
+
+def str_obj_r(obj):
+	if type(obj) == types.DictType:
+		new = {}
+		for k,v in obj.items(): new[k] = str_obj_r(v)
+		return new
+	elif type(obj) in (types.ListType, types.TupleType):
+		new = []
+		for e in obj: new.append(str_obj_r(e))
+		if type(obj) == types.TupleType: new = tuple(new)
+		return new
+	elif type(obj) not in dir(types):
+		new = str(obj)
+		return new
+	else:
+		return obj
+
+def str_obj(obj):
+	if hasattr(obj, "data"): return str_obj_r(obj.data)
+	else: return str_obj_r(obj)
+
+spin = spinwrapper.SpinWrapper(
+#	ctx = certmaster.getContextByName("spin", "spin.srv", ""),
+)
+
+session_id = eval(sys.argv[1])
+filename = "%s.dat" % session_id
+
+print "Grabbing Session %s..." % (session_id)
+session = spin.Session.get(session_id)
+session_dict = str_obj(session)
+
+print "Grabbing Session %s info..." % (session_id)
+su = session.getParent(parent_class = "SecurityUser")
+wsv = session.getParent(parent_class = "WayScriptVersion")
+wsv_source = wsv.getSource()
+ws = wsv.getParent(parent_class = "WayScript")
+session_dict["SecurityUser"] = su["username"]
+session_dict["WayScriptVersion"] = str_obj(wsv)
+session_dict["WayScriptVersion"]["source"] = wsv_source
+session_dict["WayScript"] = str_obj(ws)
+# Accounts
+accounts = []
+for sp in session.getChildren(child_class="SessionPermission"):
+	accounts.append(
+		sp.getParent(
+			parent_class="SecurityPermission"
+		).getParent(
+			parent_class="Account"
+		)["acct_name"]
+	)
+session_dict["Account"] = accounts
+
+print "Grabbing Session %s params/results..." % (session_id)
+session_dict["params"] = str_obj(session.getParams())
+session_dict["results"] = str_obj(session.getResults())
+
+print "Grabbing SessionCommands..."
+sc_list = session.getChildren(child_class = "SessionCommand")
+session_dict["SessionCommand"] = {}
+session_dict["MegaServiceInstance"] = {}
+
+x = 0
+y = len(sc_list)
+for sc in sc_list:
+	x = x + 1
+	sc_dict = str_obj(sc)
+	print "Grabbing SessionCommand %s (%s/%s) info..." % (sc["id"], x, y)
+	# MegaServiceInstance (put it on the Session though...)
+	msi_id = sc["srvc_inst_id"]
+	msi = session_dict["MegaServiceInstance"].get(
+		msi_id,
+		str_obj(
+			sc.getParent(parent_class = "MegaServiceInstance")
+		)
+	)
+	session_dict["MegaServiceInstance"][msi_id] = msi
+	# WayScript/WayScriptVersion
+	ws = None
+	wsv = None
+	if sc["way_script_version_id"]:
+		wsv = sc.getParent(parent_class = "WayScriptVersion")
+		ws = str_obj(wsv.getParent(parent_class = "WayScript"))
+		wsv_source = wsv.getSource()
+		wsv = str_obj(wsv)
+		wsv["source"] = wsv_source
+	sc_dict["WayScriptVersion"] = wsv
+	sc_dict["WayScript"] = ws
+	# params/results
+	print "Grabbing SessionCommand %s (%s/%s) params/results..." % (
+		sc["id"], x, y
+	)
+	sc_dict["params"] = str_obj(sc.getParams())
+	sc_dict["results"] = str_obj(sc.getResults())
+
+	session_dict["SessionCommand"][ sc["id"] ] = sc_dict
+
+print "Writing results..."
+outfile = open(filename, "w")
+pickle.dump(session_dict, outfile)
+outfile.close()
+

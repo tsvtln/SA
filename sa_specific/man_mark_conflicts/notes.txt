@@ -1,0 +1,5 @@
+Manually mark transactions as resolved  and unlock "conflicting" locks in order
+to allow a mesh to be usable while I_T runs
+Manually mark them as resolved via SQL (all cores)
+
+

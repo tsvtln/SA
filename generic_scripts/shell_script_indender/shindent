@@ -1,0 +1,554 @@
+#!/usr/bin/env python
+
+import sys
+sys.path.append('/Users/ppower/src/formatter/bin')
+sys.path.append('lib/python')
+import re
+import parse
+import string
+
+
+if len(sys.argv) > 1 and sys.argv[1] in ('-h','-?','--help'):
+	print """
+Usage:
+	cat bourne_script.sh | shindent > indented_bourne_script.sh
+	"""
+	sys.exit(0)
+
+
+# TODO:
+#
+# + include all of the _prior_ -> X transitions
+# + include all of the eol handling transitions
+# + include more parse_error handling transitions
+# + deal with ${hello} differently than a function def
+#   test test test
+#
+#
+# test results:
+# + blank lines are being killed
+# + "foo"\nif seems to indent the if too far
+# + heredocs are being indented
+# + don't indent the final word in a heredoc 
+# + transition from elif to else pushes else to stack after elif
+#   line after a continuation loses it's first nonblank char
+#   indent the first line of a heredoc
+#
+#
+#
+#
+
+
+
+
+debug_level=0
+#debug_level=3
+
+def debug(msg,level=1):
+	if debug_level >= level:
+		sys.stderr.write(msg + '\n')
+
+
+
+########################################
+# Token types:
+########################################
+
+tokentypes={}
+ttype_list=[]
+
+for (name,regex) in [
+		('cont','(?sL)\\\\\n'),
+		('eol','\n'),
+		('esc',r'\\.'),
+		(';;',';;'),
+		('<<','<<'),
+		('spec_var','\\$[#?$!@*_-]'),
+		('var','\\$(?:[a-zA-Z_][a-zA-Z_0-9]*|\\{[a-zA-Z_][a-zA-Z_0-9]*\\})'),	
+		('obrace','{'),
+		('oparen',r'\('),
+		('cbrace','}'),
+		('cparen',r'\)'),
+		('dquote','"'),
+		('squote','\''),
+		('pound','#'),
+		('if','if(?=\s)'),
+		('elif','elif(?=\s)'),
+		('else','else(?=\s)'),
+		('fi','fi(?=[\s;])'),
+		('case','case(?=\s)'),
+#		('do','do(?=\s)'),
+		('done','done(?=[\s;])'),
+		('esac','esac(?=[\s;])'),
+		('for','for(?=\s)'),
+#		('then','then(?=\s)'),
+		('while','while(?=\s)'),
+		('word','[a-zA-Z_][a-zA-Z_0-9]*'),
+	]:
+	tokentypes[name]=parse.TokenType(name,regex)
+	ttype_list.append(tokentypes[name])
+
+tokentypes['unmatched']=parse.TokenType.unmatched
+
+# other token types that may be interesting
+#('var','(?sL)\\$(?:[a-zA-Z_][a-zA-Z_0-9]*|\\{[a-zA-Z_][a-zA-Z_0-9]*\\})'),
+#('scolon',';'),
+#('tick',r'`'),
+#('dollar','\$'),
+#('inc',r'\.(?=\s)'),
+#('trunc','>'),
+#('append','>>'),
+#('read','<'),
+#('obrack',r'\['),
+#('cbrack',r'\]'),
+#('eq','='),
+#('sp','[\t\ ]+'),
+#('restofline','.*'),
+
+
+colors={
+	'white':			0,
+	'bold':				1,
+	'underline':		4,
+	'blink':			5,
+	'invwhite':			7,
+	'black':			30,
+	'red':				31,
+	'green':			32,
+	'yellow':			33,
+	'blue':				34,
+	'purple':			35,
+	'aqua':				36,
+	'invblack':			40,
+	'invred':			41,
+	'invgreen':			42,
+	'invyellow':		43,
+	'invblue':			44,
+	'invpurple':		45,
+	'invaqua':			46,
+	'brightblack':		90,
+	'brightred':		91,
+	'brightgreen':		92,
+	'brightyellow':		93,
+	'brightblue':		94,
+	'brightpurple':		95,
+	'brightaqua':		96,
+	'invbrightblack':	100,
+	'invbrightred':		101,
+	'invbrightgreen':	102,
+	'invbrightyellow':	103,
+	'invbrightblue':	104,
+	'invbrightpurple':	105,
+	'invbrightaqua':	106,
+}
+
+
+state_colors={
+		'init':'white',
+		'block':'brightred',
+		#'bracket':'',
+		'case':'yellow',
+		'casechoice':'invbrightblue',
+		'comment':'blue',
+		'dquote':'green',
+		'elif':'invbrightpurple',
+		'else':'invbrightblue',
+		'for':'red',
+		'heredoc':'invyellow',
+		'if':'invbrightred',
+		'paren':'aqua',
+		'squote':'invgreen',
+		'while':'brightpurple',
+	}
+
+########################################
+# states:
+########################################
+
+states={}
+state_list=[]
+
+for state_name in [
+		'init',
+		'block',
+		#'bracket',
+		'case',
+		'casechoice',
+		'casechoicetail',
+		'comment',
+		'dquote',
+		'elif',
+		'else',
+		'for',
+		'heredoc',
+		'heredocheader',
+#		'heredocfooter',
+		'if',
+		'paren',
+		'squote',
+		'while',
+	] :
+	states[state_name]=parse.State(state_name)
+	state_list.append(states[state_name])
+
+########################################
+# transition actions:
+########################################
+
+def push_token(state,nextstate,token,data):
+	debug("\trunning push_token(%s,%s,%s,data)" % (state,nextstate,token),3)
+	token.printstring = token.string
+	#token.printstring = '[93m<%s>([0m%s[93m)[0m' % (state.name,token.string) 
+	data.tokens.append(token)
+	debug("\t\tdata.tokens=%s" % (data.tokens,),3)
+	return (nextstate,data)
+
+def push_state(state,nextstate,token,data):
+	debug("\trunning push_state(%s,%s,%s,data)" % (state,nextstate,token),3)
+	data.statestack.append(nextstate)
+	data.indentstack.append(0)
+	debug("\t\tdata.statestack=%s" % (data.statestack,),3)
+	debug("\t\tdata.indentstack=%s" % (data.indentstack,),3)
+	debug("\t\tdata.indent_process_depth=%s" % (data.indent_process_depth,),3)
+	return (data.statestack[-1],data)
+
+def push_state_indent(state,nextstate,token,data):
+	debug("\trunning push_state_indent(%s,%s,%s,data)" % (state,nextstate,token),3)
+	data.statestack.append(nextstate)
+	data.indentstack.append(1)
+	debug("\t\tdata.statestack=%s" % (data.statestack,),3)
+	debug("\t\tdata.indentstack=%s" % (data.indentstack,),3)
+	debug("\t\tdata.indent_process_depth=%s" % (data.indent_process_depth,),3)
+	return (data.statestack[-1],data)
+
+def pop_state(state,nextstate,token,data):
+	debug("\trunning pop_state(%s,%s,%s,data)" % (state,nextstate,token),3)
+	data.statestack.pop()
+	data.indentstack.pop()
+	debug("\t\tdata.statestack=%s" % (data.statestack,),3)
+	debug("\t\tdata.indentstack=%s" % (data.indentstack,),3)
+	debug("\t\tdata.indent_process_depth=%s" % (data.indent_process_depth,),3)
+	if data.statestack:
+		return (data.statestack[-1],data)
+	else:
+		raise "In pop_state(%s,%s,%s,%s) I found an empty statestack after popping %s" % (state,nextstate,token,data,last)
+
+def replace_state(state,nextstate,token,data):
+	debug("\trunning replace_state(%s,%s,%s,data)" % (state,nextstate,token),3)
+	data.statestack.pop()
+	data.indentstack.pop()
+	data.statestack.append(nextstate)
+	data.indentstack.append(0)
+	debug("\t\tdata.indentstack=%s" % (data.indentstack,),3)
+	debug("\t\tdata.indent_process_depth=%s" % (data.indent_process_depth,),3)
+	debug("\t\tdata.statestack=%s" % (data.statestack,),3)
+	return (data.statestack[-1],data)
+
+def replace_state_indent(state,nextstate,token,data):
+	debug("\trunning replace_state_indent(%s,%s,%s,data)" % (state,nextstate,token),3)
+	data.statestack.pop()
+	data.indentstack.pop()
+	data.statestack.append(nextstate)
+	data.indentstack.append(1)
+	data.indent_process_depth=len(data.indentstack)-1
+	debug("\t\tdata.indentstack=%s" % (data.indentstack,),3)
+	debug("\t\tdata.indent_process_depth=%s" % (data.indent_process_depth,),3)
+	debug("\t\tdata.statestack=%s" % (data.statestack,),3)
+	return (data.statestack[-1],data)
+
+def replace_state_indent_now(state,nextstate,token,data):
+	debug("\trunning replace_state_indent_now(%s,%s,%s,data)" % (state,nextstate,token),3)
+	data.statestack.pop()
+	data.indentstack.pop()
+	data.statestack.append(nextstate)
+	data.indentstack.append(1)
+	debug("\t\tdata.indentstack=%s" % (data.indentstack,),3)
+	debug("\t\tdata.indent_process_depth=%s" % (data.indent_process_depth,),3)
+	debug("\t\tdata.statestack=%s" % (data.statestack,),3)
+	return (data.statestack[-1],data)
+
+def parse_error(state,nextstate,token,data):
+	raise 'Parse Error: unexpected token "%s" found in state "%s"' % (token.string, state.name)
+
+def remember_heredoc_word(state,nextstate,token,data):
+	debug('\trunning remember_heredoc_word(%s,%s,%s,data)' % (state,nextstate,token),3)
+	debug('\t\tdata.heredoc_word=%s' % repr(data.heredoc_word),3)
+	if not data.heredoc_word:
+		data.heredoc_word=token.string
+	debug('\t\tand after...',3)
+	debug('\t\tdata.heredoc_word=%s' % repr(data.heredoc_word),3)
+	return (nextstate,data)
+
+# checks the current word token against data.heredoc_word
+# to see if the heredoc is over yet.
+def test_heredoc_word(state,nextstate,token,data):
+	debug('\trunning test_heredoc_word(%s,%s,%s,data)' % (state,nextstate,token),3)
+	debug('\t\tdata.heredoc_word=%s' % repr(data.heredoc_word),3)
+	debug('\t\ttoken.string=%s' % repr(token.string),3)
+	if len(data.tokens) == 1 and token.string == data.heredoc_word:
+		# the heredoc ends right after this token. 
+		data.heredoc_word=None
+		debug('\t\tset data.heredoc_word=%s' % repr(data.heredoc_word),3)
+		(nextstate,data)= pop_state(state,None,token,data)
+	return (nextstate,data)
+
+# prints the current line with indentation
+def print_line(state,nextstate,token,data):
+	debug("\trunning print_line(%s,%s,%s,data)" % (state,nextstate,token),3)
+	debug("\t\tdata.indentstack=%s" % data.indentstack,3)
+	debug("\t\tdata.continuation_indent=%s" % data.continuation_indent,3)
+	debug("\t\tdata.indent_process_depth=%s" % data.indent_process_depth,3)
+	debug("\t\tdata.multiline_quote=%s" % data.multiline_quote,3)
+	raw_line=reduce(lambda x,y:x+y.printstring,data.tokens,'')
+	if not data.multiline_quote:
+		indent_level=reduce(lambda x,y:x+y,data.indentstack[0:data.indent_process_depth],0)
+		indent_level+=data.continuation_indent
+		raw_line=(indent_level*data.indent_string) + re.sub('^[\ \t]*','',raw_line)
+		#for token in data.tokens:
+		#	if raw_line or re.match('[^\ \t]',token.string):
+		#		raw_line+=token.printstring
+	
+	# print the line out
+	sys.stdout.write(raw_line)
+	return (nextstate,data)
+
+# cleans up indentation state, and purges the data.tokens list
+def handle_eol(state,nextstate,token,data):
+	debug("\trunning handle_eol(%s,%s,%s,data)" % (state,nextstate,token),3)
+	debug("\t\tdata.continuation_indent=%s" % data.continuation_indent ,3)
+	debug("\t\tdata.indent_process_depth=%s" % data.indent_process_depth,3)
+	data.tokens=[]
+	# handle continuation indents
+	if token.type == tokentypes['cont']:
+		data.continuation_indent=1
+	elif token.type == tokentypes['eol']:
+		data.continuation_indent=0
+		data.indent_process_depth=len(data.indentstack)
+
+	# handle the fact that we don't reindent quotes and heredocs
+	if token.type == tokentypes['eol'] :
+		if state in [ states['heredocheader'], states['heredoc'], states['squote'], states['dquote'] ]:
+			data.multiline_quote=True
+		else:
+			data.multiline_quote=False
+	elif token.type == tokentypes['cont'] :
+		if state in [ states['heredoc'], states['squote'], states['dquote'] ]:
+			data.multiline_quote=True
+		else:
+			data.multiline_quote=False
+
+	# handle next indent delta
+	#data.indent_level+=data.next_indent_delta
+	#data.next_indent_delta=0
+	#data.indent_process_depth=len(data.indentstack)
+	
+	# reset no_indent
+	data.no_indent=False
+
+	debug("\t\tchanged to...",3)
+	debug("\t\tdata.continuation_indent=%s" % data.continuation_indent ,3)
+	debug("\t\tdata.indent_process_depth=%s" % data.indent_process_depth,3)
+
+	return (nextstate,data)
+
+
+
+##########################################
+# Default Transitions:
+##########################################
+
+# These are the default transitions for each token type
+# We'll override them with more specific ones for some states
+# below.
+for ttype in tokentypes.values():
+	for state in states.values():
+		if ttype.name == ';;':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == '<<':
+			state.add_transition(ttype,states['heredocheader'],action=[push_token,push_state])
+		elif ttype.name == 'case':
+			state.add_transition(ttype,states['case'],action=[push_token,push_state_indent])
+		elif ttype.name == 'cbrace':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == 'cont':
+			state.add_transition(ttype,state,action=[push_token,print_line,handle_eol])
+		elif ttype.name == 'cparen':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == 'do':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == 'var':
+			state.add_transition(ttype,state,action=[push_token])
+		elif ttype.name == 'spec_var':
+			state.add_transition(ttype,state,action=[push_token])
+		elif ttype.name == 'done':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == 'dquote':
+			state.add_transition(ttype,states['dquote'],action=[push_token,push_state])
+		elif ttype.name == 'elif':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == 'else':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == 'eol':
+			state.add_transition(ttype,state,action=[push_token,print_line,handle_eol])
+		elif ttype.name == 'esac':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == 'esc':
+			state.add_transition(ttype,state,action=[push_token])
+		elif ttype.name == 'fi':
+			state.add_transition(ttype,None,action=[parse_error])
+		elif ttype.name == 'for':
+			state.add_transition(ttype,states['for'],action=[push_token,push_state_indent])
+		elif ttype.name == 'if':
+			state.add_transition(ttype,states['if'],action=[push_token,push_state_indent])
+		elif ttype.name == 'obrace':
+			state.add_transition(ttype,states['block'],action=[push_token,push_state_indent])
+		elif ttype.name == 'oparen':
+			state.add_transition(ttype,states['paren'],action=[push_token,push_state])
+		elif ttype.name == 'pound':
+			state.add_transition(ttype,states['comment'],action=[push_token,push_state])
+		elif ttype.name == 'squote':
+			state.add_transition(ttype,states['squote'],action=[push_token,push_state])
+		elif ttype.name == 'unmatched':
+			state.add_transition(ttype,state,action=[push_token])
+		elif ttype.name == 'while':
+			state.add_transition(ttype,states['while'],action=[push_token,push_state_indent])
+		elif ttype.name == 'word':
+			state.add_transition(ttype,state,action=[push_token])
+
+
+
+################################################
+# Transitions within literal strings and comments
+################################################
+
+# squote group:
+for ttype in tokentypes.values():
+	if ttype.name in [ ';;', '<<', 'case', 'cbrace', 'cparen',
+				'done', 'dquote', 'elif', 'else', 'esac', 'esc',
+				'fi', 'for', 'if', 'obrace', 'oparen', 'pound',
+				'unmatched', 'while', 'word', 'spec_var', 'var']:
+		states['squote'].add_transition(ttype,states['squote'],action=[push_token])
+	elif ttype.name == 'squote':
+		states['squote'].add_transition(ttype,None,action=[push_token,pop_state])
+		#states['squote'].add_transition(ttype,None,action=[push_token,pop_state])
+
+
+# dquote group:
+for ttype in tokentypes.values():
+	if ttype.name in [ ';;', '<<', 'case', 'cbrace', 'cparen',
+				'done', 'elif', 'else', 'esac', 'esc', 'fi',
+				'for', 'if', 'obrace', 'oparen', 'pound', 'squote',
+				'unmatched', 'while', 'word', 'spec_var', 'var']:
+		states['dquote'].add_transition(ttype,states['dquote'],action=[push_token])
+	elif ttype.name == 'dquote':
+		states['dquote'].add_transition(ttype,None,action=[push_token,pop_state])
+
+# comment group:
+for ttype in tokentypes.values():
+	if ttype.name in [ ';;', '<<', 'case', 'cbrace', 'cparen',
+				'done', 'dquote', 'elif', 'else', 'esac', 'esc',
+				'fi', 'for', 'if', 'obrace', 'oparen', 'pound',
+				'squote', 'unmatched', 'while', 'word', 'spec_var', 'var']:
+		states['comment'].add_transition(ttype,states['comment'],action=[push_token])
+	elif ttype.name in ['cont','eol']:
+		states['comment'].add_transition(ttype,None,action=[push_token,pop_state,print_line,handle_eol])
+
+
+# heredoc group:
+for ttype in tokentypes.values():
+	if ttype.name in [ ';;', '<<', 'case', 'cbrace', 'cparen',
+				'done', 'dquote', 'elif', 'else', 'esac', 'esc',
+				'fi', 'for', 'if', 'obrace', 'oparen', 'pound',
+				'squote', 'unmatched', 'while', 'spec_var', 'var']:
+		states['heredoc'].add_transition(ttype,states['heredoc'],action=[push_token])
+	elif ttype.name in ['eol','cont']:
+		states['heredoc'].add_transition(ttype,states['heredoc'],action=[push_token,print_line,handle_eol])
+	elif ttype.name == 'word':
+		states['heredoc'].add_transition(ttype,states['heredoc'],action=[push_token,test_heredoc_word])
+
+
+
+##################################
+# Special transitions by state:
+##################################
+
+# Paren group:
+states['paren'].add_transition(tokentypes['cparen'],None,action=[push_token,pop_state])
+
+# for group:
+states['for'].add_transition(tokentypes['done'],None,action=[push_token,pop_state])
+
+# if group:
+states['if'].add_transition(tokentypes['elif'],states['elif'],action=[push_token,replace_state_indent])
+states['if'].add_transition(tokentypes['else'],states['else'],action=[push_token,replace_state_indent])
+states['if'].add_transition(tokentypes['fi'],None,action=[push_token,pop_state])
+
+# elif group:
+states['elif'].add_transition(tokentypes['else'],states['else'],action=[push_token,replace_state_indent])
+states['elif'].add_transition(tokentypes['fi'],None,action=[push_token,pop_state])
+states['elif'].add_transition(tokentypes['elif'],states['elif'],action=[push_token,replace_state_indent])
+
+# else group:
+states['else'].add_transition(tokentypes['fi'],None,action=[push_token,pop_state])
+
+# block group:
+states['block'].add_transition(tokentypes['cbrace'],None,action=[push_token,pop_state])
+
+# while group:
+states['while'].add_transition(tokentypes['done'],None,action=[push_token,pop_state])
+
+# case group:
+states['case'].add_transition(tokentypes['cparen'],states['casechoice'],action=[push_token,push_state_indent])
+states['case'].add_transition(tokentypes['esac'],None,action=[push_token,pop_state])
+
+# casechoice group:
+states['casechoice'].add_transition(tokentypes[';;'],states['casechoicetail'],action=[push_token,replace_state_indent_now])
+
+# casechoicetail group:
+states['casechoicetail'].add_transition(tokentypes['eol'],states['case'],action=[push_token,print_line,pop_state,handle_eol])
+states['casechoicetail'].add_transition(tokentypes['cont'],states['case'],action=[push_token,print_line,pop_state,handle_eol])
+
+# heredocheader group:
+states['heredocheader'].add_transition(tokentypes['word'],states['heredocheader'],action=[push_token,remember_heredoc_word])
+#states['heredocheader'].add_transition(tokentypes['cont'],states['heredocheader'],action=[push_token,print_line,handle_eol])
+states['heredocheader'].add_transition(tokentypes['eol'],states['heredoc'],action=[push_token,replace_state,print_line,handle_eol])
+
+# heredocfooter group:
+#states['heredocfooter'].add_transition(tokentypes['eol'],None,action=[push_token,print_line,pop_state,handle_eol])
+#states['heredocfooter'].add_transition(tokentypes['cont'],states['init'],action=[push_token,print_line,pop_state,handle_eol])
+# setting state to 'init' in the above line is a hack!!!
+
+
+
+###################################
+# Parse stdin
+##################################
+
+
+debug(str((states['comment']).transitions.keys()),3)
+
+# Initialize data
+class mystate:
+	def __init__(self):
+		self.statestack=[states['init'],]
+		self.indent_string='   '
+		#self.indent_string='[93m....[0m'
+		#self.indent_level=0
+		#self.next_indent_delta=0
+		self.continuation_indent=0
+		self.tokens=[]
+		self.heredoc_word=None
+		#self.no_indent=False
+		self.multiline_quote=False
+		self.indentstack=[0,]
+		self.indent_process_depth=1
+
+data=mystate()
+
+input=sys.stdin.read()
+
+# parse it !
+(tokens,finaldata)=parse.parse(input,states['init'],ttype_list,data)
+
+#print "tokens=%s" % tokens
+

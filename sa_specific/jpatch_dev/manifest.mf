@@ -1,0 +1,3 @@
+Agent-Class: jpatch_agent
+Can-Redefine-Classes: true
+

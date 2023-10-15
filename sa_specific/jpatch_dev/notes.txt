@@ -1,0 +1,21 @@
+http://www.fasterj.com/articles/hotpatch2.shtml
+
+-------------------------------------------------------------------------------
+
+/opt/opsware/jdk1.6/bin/java -cp .:/opt/opsware/jdk1.6/lib/tools.jar jpatch `pwd`/jpatch_agent.jar 5812 so\ me/foo/class so\ me/foo.class
+
+-------------------------------------------------------------------------------
+
+bsh prototyping of jdi strategy:
+
+# /opt/opsware/jdk1.6/bin/java -cp /opt/opsware/occ/occ/lib/bsh-1.3.0.jar:/root/users/dw/tools/jline-0_9_5.jar:/opt/opsware/jdk1.6/lib/tools.jar jline.ConsoleRunner bsh.Interpreter
+
+import com.sun.jdi.*;
+vmm = Bootstrap.virtualMachineManager();
+cl = vmm.attachingConnectors();
+ac = cl.get(1);
+args = ac.defaultArguments();
+args.get("pid").setValue("9093");
+tvm = ac.attach(args);
+
+-------------------------------------------------------------------------------

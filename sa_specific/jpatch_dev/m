@@ -1,0 +1,11 @@
+#!/bin/sh
+
+/opt/opsware/jdk1.6/bin/javac jpatch_agent.java
+
+/opt/opsware/jdk1.6/bin/javac -cp /opt/opsware/jdk1.6/lib/tools.jar jpatch.java
+
+/opt/opsware/jdk1.6/bin/jar cvfm jpatch.jar manifest.mf jpatch_agent.class jpatch.class
+
+cat jpatch.sh jpatch.jar > jpatch
+
+chmod a+rx jpatch

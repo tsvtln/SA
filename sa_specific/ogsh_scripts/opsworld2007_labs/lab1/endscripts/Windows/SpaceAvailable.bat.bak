@@ -1,0 +1,45 @@
+
+@echo off
+rem Set up the environment.
+setlocal
+
+rem Extract the VBS script.
+rem set rand=%random%
+echo rem File tmp-DispPartitions2.vbs > tmp-DispPartitions2.vbs
+echo Option Explicit >> tmp-DispPartitions2.vbs
+echo Dim objWbemObjectSet, objWshNetwork >> tmp-DispPartitions2.vbs
+echo Dim strComputerName >> tmp-DispPartitions2.vbs
+echo Dim diskInfo, diskName, diskSize, diskFree, diskFreePercent, instance >> tmp-DispPartitions2.vbs
+echo Dim strDesc >> tmp-DispPartitions2.vbs
+echo Const FACTOR ^= 100       ' 100 displays two decimal places >> tmp-DispPartitions2.vbs
+echo Const diskHeader ^= "Host|Drivename|Capacity|Available|PercentAvail%"       ' 100 displays two decimal places >> tmp-DispPartitions2.vbs
+echo On Error Goto 0 >> tmp-DispPartitions2.vbs
+echo Set objWshNetwork ^= WScript^.CreateObject^(^"WScript^.Network^") >> tmp-DispPartitions2.vbs
+echo strComputerName ^= objWshNetwork^.ComputerName >> tmp-DispPartitions2.vbs
+echo Set objWbemObjectSet ^= GetObject^(^"winmgmts:^/^/^" ^& strComputerName)^.ExecQuery ^(^"select FreeSpace,Size,Name from Win32_LogicalDisk where DriveType^=3^") >> tmp-DispPartitions2.vbs
+echo diskInfo ^= strComputerName >> tmp-DispPartitions2.vbs
+echo   	wscript^.echo diskHeader ^& vbNewLine >> tmp-DispPartitions2.vbs
+echo For Each instance In objWbemObjectSet  >> tmp-DispPartitions2.vbs
+echo 	diskName ^= instance^.name >> tmp-DispPartitions2.vbs
+echo 	diskSize ^= instance^.size >> tmp-DispPartitions2.vbs
+echo 	diskFree ^= instance^.FreeSpace >> tmp-DispPartitions2.vbs
+echo 	diskInfo ^= diskInfo ^& ^"^|^" ^& Left^(diskName,Len^(diskName)-1)  ^& ^"^|^" ^& _ >> tmp-DispPartitions2.vbs
+echo 		^(CInt^(FACTOR * diskSize ^/ 1073741824) ^/ FACTOR) ^& ^"^|^" ^& _ >> tmp-DispPartitions2.vbs
+echo 		^(CInt^(FACTOR * diskFree ^/ 1073741824) ^/ FACTOR) >> tmp-DispPartitions2.vbs
+echo 	'If ^(diskFree^/diskSize) ^< 0^.10 Then >> tmp-DispPartitions2.vbs
+echo 		diskFreePercent ^= CInt^(100 * ^(diskFree^/diskSize)) >> tmp-DispPartitions2.vbs
+echo 		diskInfo ^= diskInfo ^& ^"^|^" ^& diskFreePercent >> tmp-DispPartitions2.vbs
+echo 	'End If >> tmp-DispPartitions2.vbs
+echo 	diskInfo ^= diskInfo ^& ^"^|^" >> tmp-DispPartitions2.vbs
+echo   	wscript^.echo diskInfo ^& vbNewLine >> tmp-DispPartitions2.vbs
+echo Next >> tmp-DispPartitions2.vbs
+echo Set objWshNetwork ^= Nothing >> tmp-DispPartitions2.vbs
+echo Set objWbemObjectSet ^= Nothing >> tmp-DispPartitions2.vbs
+echo Set objWshNetwork ^= Nothing >> tmp-DispPartitions2.vbs
+echo WScript^.Quit^(0) >> tmp-DispPartitions2.vbs
+
+
+rem Execute the script.
+cscript.exe  //nologo tmp-DispPartitions2.vbs 
+del /f tmp-DispPartitions2.vbs
+

@@ -1,0 +1,11 @@
+#! /bin/bash
+#####
+##### ... to check status of terminal service
+cd /opsw/Server/@ echo ""
+for H in * ; do
+        grep "^os:.*Windows " $H/info >/dev/null || continue
+        echo "==> $H "
+        grep "^os:.*Windows " $H/info | sed -e 's/^os:            //'
+        (rosh -n $H -l Administrator "net start" | grep -i terminal) 2>&1 \
+| sed -e 's/^/    /'
+done

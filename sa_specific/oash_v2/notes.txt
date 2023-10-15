@@ -1,0 +1,10 @@
+ o Method for encapsulating async-based abstractions. 
+
+basic one-way async stream interface:
+
+class AsyncStream:
+  def SelectableItem( )
+  def OnRead( )
+  def OnWrite( )
+  def OnError( )
+

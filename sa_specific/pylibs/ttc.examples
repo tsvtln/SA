@@ -1,0 +1,17 @@
+[root@sa902 pylibs]# ./ttc -g -un dwest -o/realm TRANSITIONAL -o/ip_addr 127.0.0.1
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<tok>
+    <v>1.0</v>
+    <t>ident</t>
+    <uid>810001</uid>
+    <un>dwest</un>
+    <o>
+        <ip_addr>127.0.0.1</ip_addr>
+        <realm>TRANSITIONAL</realm>
+    </o>
+    <vf>1319042200687</vf>
+    <vu>1350578200687</vu>
+</tok>
+[root@sa902 pylibs]# ./ttc -ge -un dwest -o/realm TRANSITIONAL -o/ip_addr 127.0.0.1
+gNTeXmpL0KIetKCLh+dO/vcLbeILEp+UXgaXpQMcgHuDAB347nGeNtczrSuMvOnrsz/b8B20K+mMuQ/IIK1usYUZi7NhcAaHvykpGFS4nmX/UL6bS/maOeIq4t5v0bbWsLh68+ccRRigajFBHEnl7HH/9Xsv2S7lqyzD604L80TjsEIbcV1Ggf3zs1sWrFmm72WQwbRFW3Jkm0kj73ib/X4FlrYDUzjEQOPl95HE5j4QkpvngJ44Jg57LEPNrLWuuibsxsP9FE1h+1KcXxoOKTP4DFVZWAKkHgRXsCKRZyGu+8rmbojg3HanclvagUlYAL7EJt/uULGSEwX3e2hmCiBibdKJx4YhrRpAn+mJXYkiMXrtiRSCU8i+VQkpbsKuxNei/WKynPGkS1sR8aIebWIEKTqi2lvxp7vPEbFoB38=
+
